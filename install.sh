@@ -5,6 +5,7 @@
 #   2. 离线安装：把 install.sh 和 fog2bx-linux-amd64（或 arm64）传到节点机器同一个目录，运行 bash install.sh
 #   3. 指定下载地址：FOG2BX_URL=https://你的地址/fog2bx-linux-amd64 bash install.sh
 # 可选：FOG2BX_VERSION=v1.0.0 指定版本（默认装最新发布的版本）。
+#       FOG2BX_STOP_OLD=y/n 事先回答「要不要停掉 V2bX / v2node / XrayR」（默认会问，没有终端时停）。
 # 装好后用 fog2bx 命令管理（和 V2bX 一样，不带参数进菜单）。
 set -e
 REPO=FogMaly/fog2bx
@@ -100,29 +101,60 @@ if [ ! -f /etc/fog2bx/config.json ]; then
     exit 1
   fi
 fi
-# fog2bx 是用来代替 V2bX / v2node / XrayR 的，同时跑会抢面板节点的端口，让 fog2bx 的节点起不来。
-# 先把它们停掉并取消开机自启，再启动 fog2bx。配置文件不动，随时能恢复
-for u in V2bX v2node XrayR; do
-  if systemctl is-active --quiet "$u" 2>/dev/null || systemctl is-enabled --quiet "$u" 2>/dev/null; then
-    systemctl stop "$u" 2>/dev/null || true
-    systemctl disable "$u" >/dev/null 2>&1 || true
-    yellow "已停止 $u 并取消开机自启（配置文件没动，要恢复：systemctl disable --now fog2bx && systemctl enable --now $u）"
-  fi
-done
-
 # 节点端口：从 fog2bx check 的输出里取（「端口 44330」）
 PORTS=$(fog2bx check 2>/dev/null | grep -o '端口 [0-9]*' | cut -d' ' -f2 | sort -un || true)
 # listeners PORT：占着这个 TCP 端口的进程，每行「进程名 pid」
 listeners() {
+  command -v ss >/dev/null || return 0
   ss -ltnp 2>/dev/null | awk -v p="$1" '$4 ~ ":"p"$"' \
     | grep -o '(("[^"]*",pid=[0-9]*' | sed 's/(("\([^"]*\)",pid=/\1 /' | sort -u || true
 }
+# unit_of PID：进程所属的 systemd 服务
+unit_of() { sed -n 's#.*/\([^/]*\.service\)$#\1#p' "/proc/$1/cgroup" 2>/dev/null | head -1; }
+# ask 提示：问 y/n，默认是。FOG2BX_STOP_OLD=y/n 时直接用它；没有终端时按默认
+ask() {
+  local a
+  if [ -n "$FOG2BX_STOP_OLD" ]; then a=$FOG2BX_STOP_OLD
+  elif [ -t 0 ]; then read -r -p "$1 (Y/n)：" a || a=
+  elif (: </dev/tty) 2>/dev/null; then read -r -p "$1 (Y/n)：" a </dev/tty || a=
+  fi
+  case "$a" in [nN]*) return 1 ;; *) return 0 ;; esac
+}
+
+# fog2bx 是用来代替 V2bX / v2node / XrayR 的，同时跑会抢面板节点的端口，让 fog2bx 的节点起不来。
+# 问过之后先把它们停掉并取消开机自启，再启动 fog2bx。配置文件不动，随时能恢复
+for u in V2bX v2node XrayR; do
+  systemctl is-active --quiet "$u" 2>/dev/null || systemctl is-enabled --quiet "$u" 2>/dev/null || continue
+  HELD=
+  for p in $PORTS; do
+    while read -r name pid; do
+      [ -n "$pid" ] && [ "$(unit_of "$pid")" = "$u.service" ] && HELD="$HELD $p" && break
+    done <<<"$(listeners "$p")"
+  done
+  echo
+  if [ -n "$HELD" ]; then
+    yellow "检测到 $u 正在运行，占着节点端口$HELD，不停掉的话这些节点起不来"
+  elif systemctl is-active --quiet "$u" 2>/dev/null; then
+    yellow "检测到 $u 正在运行，fog2bx 就是用来代替它的"
+  else
+    yellow "检测到 $u 设了开机自启（现在没运行），重启机器后会和 fog2bx 抢端口"
+  fi
+  yellow "停掉后 $u 上的所有节点都会停，配置文件不动"
+  if ask "停掉 $u 并取消开机自启？"; then
+    systemctl stop "$u" 2>/dev/null || true
+    systemctl disable "$u" >/dev/null 2>&1 || true
+    green "已停止 $u 并取消开机自启（要换回：systemctl disable --now fog2bx && systemctl enable --now $u）"
+  else
+    yellow "保留 $u。之后要停：systemctl disable --now $u，再运行 fog2bx restart"
+  fi
+done
+
 if command -v ss >/dev/null; then
   # 别的程序占着节点端口时只提示，不替用户停（可能是 nginx 之类的正经服务）
   for p in $PORTS; do
     listeners "$p" | while read -r name pid; do
       [ "$name" = fog2bx ] && continue
-      unit=$(sed -n 's#.*/\([^/]*\.service\)$#\1#p' "/proc/$pid/cgroup" 2>/dev/null | head -1)
+      unit=$(unit_of "$pid")
       if [ -n "$unit" ]; then stop="systemctl disable --now $unit"; else stop="kill $pid"; fi
       red "端口 $p 被 $name（pid $pid${unit:+，$unit}）占着，用这个端口的节点起不来"
       red "  确认它不用了就停掉：$stop，再运行 fog2bx restart"

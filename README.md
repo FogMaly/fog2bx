@@ -44,8 +44,10 @@ bash install.sh
 1. 把程序装到 `/usr/local/bin/fog2bx`，并注册 systemd 服务、设为开机自启；
 2. 没有配置文件时进入「生成配置」：填面板地址和通讯密钥，再逐个选协议（1 VLESS+REALITY / 2 AnyTLS+REALITY）、填节点 ID。
    每填一个都会马上连面板核对：节点存不存在、协议对不对、REALITY 密钥有没有、这台机器能不能把它跑起来；
-3. **先关掉旧的节点程序**：V2bX / v2node / XrayR 在运行或设了开机自启的，停掉并取消开机自启（配置文件不动）。
-   它们和 fog2bx 同时跑会抢面板节点的端口，fog2bx 的节点会一直报 `address already in use` 起不来；
+3. **先关掉旧的节点程序**：V2bX / v2node / XrayR 在运行或设了开机自启的，会说明它占着哪些节点端口，
+   问你要不要停掉并取消开机自启（直接回车就是停；配置文件不动）。
+   它们和 fog2bx 同时跑会抢面板节点的端口，fog2bx 的节点会一直报 `address already in use` 起不来。
+   没有终端时按默认停掉；想事先定好可以加 `FOG2BX_STOP_OLD=y`（停）或 `FOG2BX_STOP_OLD=n`（保留）。
    节点端口被其他程序（如 nginx）占着时只提示，不会替你停；
 4. 启动（升级时重启）服务，再核对每个节点端口都由 fog2bx 监听上了。
 
