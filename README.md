@@ -13,6 +13,22 @@
 
 面板上要先装好 `AnytlsReality` 插件（AnyTLS 的 REALITY 密钥靠它下发），并在面板上建好节点。
 
+### 一键安装（推荐）
+
+在节点机器上用 root 运行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/FogMaly/fog2bx/main/install.sh)
+```
+
+脚本会按机器的 CPU 架构（amd64 / arm64）从 [Releases](https://github.com/FogMaly/fog2bx/releases) 下载对应的程序，
+核对 SHA256 校验和，然后进入下面说的「生成配置」。没有 curl 的机器会自动改用 wget。
+
+- 指定版本：`FOG2BX_VERSION=v1.0.0 bash <(curl -fsSL ...)`，默认装最新发布的版本
+- 机器连不上 GitHub 时，把程序放到自己的地址：`FOG2BX_URL=https://.../fog2bx-linux-amd64 bash install.sh`
+
+### 离线安装
+
 把 `fog2bx-1.0.0-linux.tar.gz` 传到节点机器上：
 
 ```bash
@@ -30,9 +46,7 @@ bash install.sh
    每填一个都会马上连面板核对：节点存不存在、协议对不对、REALITY 密钥有没有、这台机器能不能把它跑起来；
 3. 启动服务。
 
-已经装过时再运行一次 `install.sh` 就是升级：替换程序、保留配置、重启。
-
-也可以把程序放到自己的下载地址：`FOG2BX_URL=https://.../fog2bx-linux-amd64 bash install.sh`。
+已经装过时再运行一次 `install.sh`（或一键安装命令）就是升级：替换程序、保留配置、重启。
 
 ## 管理
 
