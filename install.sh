@@ -100,10 +100,58 @@ if [ ! -f /etc/fog2bx/config.json ]; then
     exit 1
   fi
 fi
+# fog2bx 是用来代替 V2bX / v2node / XrayR 的，同时跑会抢面板节点的端口，让 fog2bx 的节点起不来。
+# 先把它们停掉并取消开机自启，再启动 fog2bx。配置文件不动，随时能恢复
+for u in V2bX v2node XrayR; do
+  if systemctl is-active --quiet "$u" 2>/dev/null || systemctl is-enabled --quiet "$u" 2>/dev/null; then
+    systemctl stop "$u" 2>/dev/null || true
+    systemctl disable "$u" >/dev/null 2>&1 || true
+    yellow "已停止 $u 并取消开机自启（配置文件没动，要恢复：systemctl disable --now fog2bx && systemctl enable --now $u）"
+  fi
+done
+
+# 节点端口：从 fog2bx check 的输出里取（「端口 44330」）
+PORTS=$(fog2bx check 2>/dev/null | grep -o '端口 [0-9]*' | cut -d' ' -f2 | sort -un || true)
+# listeners PORT：占着这个 TCP 端口的进程，每行「进程名 pid」
+listeners() {
+  ss -ltnp 2>/dev/null | awk -v p="$1" '$4 ~ ":"p"$"' \
+    | grep -o '(("[^"]*",pid=[0-9]*' | sed 's/(("\([^"]*\)",pid=/\1 /' | sort -u || true
+}
+if command -v ss >/dev/null; then
+  # 别的程序占着节点端口时只提示，不替用户停（可能是 nginx 之类的正经服务）
+  for p in $PORTS; do
+    listeners "$p" | while read -r name pid; do
+      [ "$name" = fog2bx ] && continue
+      unit=$(sed -n 's#.*/\([^/]*\.service\)$#\1#p' "/proc/$pid/cgroup" 2>/dev/null | head -1)
+      if [ -n "$unit" ]; then stop="systemctl disable --now $unit"; else stop="kill $pid"; fi
+      red "端口 $p 被 $name（pid $pid${unit:+，$unit}）占着，用这个端口的节点起不来"
+      red "  确认它不用了就停掉：$stop，再运行 fog2bx restart"
+    done
+  done
+fi
+
 if [ $UPGRADE = 1 ]; then
   fog2bx restart
 else
   fog2bx start
+fi
+
+# 启动后核对：每个节点端口都由 fog2bx 在监听
+if command -v ss >/dev/null && [ -n "$PORTS" ]; then
+  BAD=
+  for i in 1 2 3 4 5; do
+    sleep 1
+    BAD=
+    for p in $PORTS; do
+      listeners "$p" | grep -q '^fog2bx ' || BAD="$BAD $p"
+    done
+    [ -z "$BAD" ] && break
+  done
+  if [ -n "$BAD" ]; then
+    red "这些端口 fog2bx 没监听上：$(echo $BAD)，用 fog2bx log 看原因"
+  else
+    green "节点端口都已由 fog2bx 监听：$(echo $PORTS)"
+  fi
 fi
 echo
 green "完成。管理菜单：fog2bx    看日志：fog2bx log"
